@@ -69,10 +69,18 @@ function assistantText(message: SessionMessageInfo): string {
     .trim()
 }
 
-// Camino alternativo: `generate.text` acepta modelo pero no ve la sesión, así
-// que hay que mandarle la transcripción como texto.
-function transcript(context: Context, sessionID: string): string {
-  const messages = context.data.session.message.list(sessionID) ?? []
+// La caché de la TUI guarda sólo una ventana de mensajes; para el brief se pide
+// una página más grande al server y se cae a la caché si la llamada falla.
+async function transcript(context: Context, sessionID: string): Promise<string> {
+  let messages: SessionMessageInfo[] = []
+  try {
+    const response = await context.client.message.list({ sessionID, limit: 200, order: "desc" })
+    messages = [...response.data].reverse()
+  } catch (error) {
+    log("transcript.cache", { error: error instanceof Error ? error.message : String(error) })
+    messages = context.data.session.message.list(sessionID) ?? []
+  }
+
   const chunks: string[] = []
   for (const message of messages) {
     if (message.type === "user") {
@@ -83,6 +91,7 @@ function transcript(context: Context, sessionID: string): string {
     }
   }
   const joined = chunks.join("\n\n")
+  log("transcript", { messages: messages.length, chunks: chunks.length, chars: joined.length })
   return joined.length > MAX_TRANSCRIPT_CHARS ? joined.slice(-MAX_TRANSCRIPT_CHARS) : joined
 }
 
@@ -185,7 +194,7 @@ export default Plugin.define({
           ? { providerID: current.providerID, id: current.modelID, variant: current.variant }
           : { providerID: current.providerID, id: current.modelID }
         : undefined
-      const body = transcript(context, sessionID)
+      const body = await transcript(context, sessionID)
       const text = await stateless(`${prompt}\n\n--- TRANSCRIPCIÓN DE LA SESIÓN ---\n${body}`, fallback)
       return { text, via: `generate.text(fallback, ${body.length} chars)` }
     }
