@@ -44,7 +44,10 @@ The dialog is opened the way the host opens `/btw`, not with plugin-specific plu
   close. No custom mode push, and `esc`/`ctrl+c` close come from the host layer (which also clears a
   text selection before closing).
 - Body: markdown on `background.raised.high` with `internalBlockMode="top-level"` and
-  `tableOptions: grid`, inside a `scrollbox` capped at 60% of the terminal height.
+  `tableOptions: grid`, inside a `scrollbox` capped at 60% of the terminal height. The syntax style
+  is built from the theme's `markdown` and `syntax` tokens with the same scope table the host
+  generates for `/btw`, so headings, strong/emphasis, links and inline code are styled instead of
+  flat text.
 - Chrome: `theme.surface("dialog")` colors, lateral inset 3, header with the title and the focus.
 
 Two host internals `/btw` uses are not exported to plugins, so the panel rebuilds them with

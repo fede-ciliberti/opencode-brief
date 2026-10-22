@@ -7,6 +7,7 @@ import os from "node:os"
 import path from "node:path"
 import { createSignal } from "solid-js"
 import { SyntaxStyle } from "@opentui/core"
+import type { ThemeTokenStyle } from "@opentui/core"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
@@ -103,6 +104,47 @@ async function transcript(context: Context, sessionID: string): Promise<string> 
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+// Mismo mapeo de scopes que usa el host para el markdown (`generateSyntax` de
+// @opencode/theme), limitado a lo que puede traer un brief: markdown y los
+// tokens de los bloques de código. Sin esto el panel renderiza la estructura
+// pero los encabezados y el énfasis salen planos.
+function syntaxStyle(theme: Context["theme"], owner: Parameters<typeof SyntaxStyle.fromTheme>[1]): SyntaxStyle {
+  const markdown = theme.markdown
+  const syntax = theme.syntax
+  const rules: Array<ThemeTokenStyle> = [
+    { scope: ["default"], style: { foreground: theme.text.base } },
+    { scope: ["comment", "comment.documentation"], style: { foreground: syntax.comment, italic: true } },
+    { scope: ["string", "symbol", "character"], style: { foreground: syntax.string } },
+    { scope: ["number", "boolean", "constant", "float"], style: { foreground: syntax.number } },
+    { scope: ["keyword"], style: { foreground: syntax.keyword, italic: true } },
+    { scope: ["function", "function.call", "function.method"], style: { foreground: syntax.function } },
+    { scope: ["type", "class", "namespace", "module"], style: { foreground: syntax.type } },
+    { scope: ["variable", "variable.parameter", "property", "field", "parameter"], style: { foreground: syntax.variable } },
+    {
+      scope: ["operator", "punctuation", "punctuation.bracket", "punctuation.delimiter"],
+      style: { foreground: syntax.operator },
+    },
+    {
+      scope: ["markup.heading", "markup.heading.2", "markup.heading.3", "markup.heading.4", "markup.heading.5", "markup.heading.6"],
+      style: { foreground: markdown.heading, bold: true },
+    },
+    { scope: ["markup.heading.1"], style: { foreground: markdown.heading, bold: true, underline: true } },
+    { scope: ["markup.bold", "markup.strong"], style: { foreground: markdown.strong, bold: true } },
+    { scope: ["markup.italic"], style: { foreground: markdown.emphasis, italic: true } },
+    { scope: ["markup.list"], style: { foreground: markdown.listItem } },
+    { scope: ["markup.quote"], style: { foreground: markdown.blockQuote, italic: true } },
+    { scope: ["markup.raw", "markup.raw.block"], style: { foreground: markdown.code } },
+    { scope: ["markup.raw.inline"], style: { foreground: markdown.code, background: theme.background.base } },
+    {
+      scope: ["markup.link", "markup.link.url", "string.special", "string.special.url"],
+      style: { foreground: markdown.link, underline: true },
+    },
+    { scope: ["markup.link.label"], style: { foreground: markdown.linkText, underline: true } },
+    { scope: ["label"], style: { foreground: markdown.linkText } },
+  ]
+  return SyntaxStyle.fromTheme(rules, owner)
 }
 
 
@@ -295,7 +337,7 @@ export default Plugin.define({
       }
       log("brief.ok", { via, chars: text.length })
 
-      const style = SyntaxStyle.fromStyles({ default: { fg: context.theme.markdown.text } }, context.renderer.nativeScene)
+      const style = syntaxStyle(context.theme, context.renderer.nativeScene)
       // El orden importa: `show` reemplaza el diálogo y resetea tamaño y
       // centrado a medium/no centrado; `set` tiene que venir después.
       context.ui.dialog.show(
