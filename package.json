@@ -1,0 +1,18 @@
+{
+  "name": "opencode-brief",
+  "version": "0.1.0",
+  "description": "OpenCode TUI plugin: /brief opens an executive summary of the session in a dialog",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./tui": "./tui.tsx"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.1.3",
+    "@opentui/core": "^0.6.6",
+    "@opentui/solid": "^0.6.6",
+    "@types/node": "^26.6.5",
+    "solid-js": "^1.9.17",
+    "typescript": "5.9.3"
+  }
+}
