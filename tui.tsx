@@ -1,8 +1,11 @@
-// opencode-brief — plugin de TUI: /brief abre un panel con el brief ejecutivo
-// de la sesión. Una sola llamada al modelo, sin tocar el historial.
+// opencode-brief — plugin de TUI: /brief abre el brief ejecutivo de la sesión
+// en el mismo diálogo que usa el /btw nativo: `dialog.show` + `dialog.set`
+// (en ese orden), capa de teclas en modo "modal" registrada por el componente
+// y marco del diálogo con los mismos inset y colores del host.
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { createSignal } from "solid-js"
 import { SyntaxStyle } from "@opentui/core"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { Plugin } from "@opencode/plugin/tui"
@@ -13,7 +16,8 @@ const SKILL_PATH = path.join(os.homedir(), ".config", "opencode", "skills", "bri
 const LOG_DIR = path.join(os.homedir(), ".local", "share", "opencode-brief")
 const LOG_FILE = path.join(LOG_DIR, "brief.log")
 const MAX_TRANSCRIPT_CHARS = 40_000
-const MODE = "opencode-brief"
+/** Inset lateral del diálogo nativo (bf en el host): padding de cabecera y sangría del cuerpo. */
+const INSET = 3
 
 // Sólo longitudes y resultado: nunca el contenido del prompt ni del brief.
 function log(event: string, data: Record<string, unknown> = {}) {
@@ -69,8 +73,10 @@ function assistantText(message: SessionMessageInfo): string {
     .trim()
 }
 
-// La caché de la TUI guarda sólo una ventana de mensajes; para el brief se pide
-// una página más grande al server y se cae a la caché si la llamada falla.
+// Camino alternativo: `generate.text` acepta modelo pero no ve la sesión, así
+// que hay que mandarle la transcripción como texto. La caché de la TUI guarda
+// sólo una ventana de mensajes: se pide una página más grande al server y se
+// cae a la caché si la llamada falla.
 async function transcript(context: Context, sessionID: string): Promise<string> {
   let messages: SessionMessageInfo[] = []
   try {
@@ -95,41 +101,111 @@ async function transcript(context: Context, sessionID: string): Promise<string> 
   return joined.length > MAX_TRANSCRIPT_CHARS ? joined.slice(-MAX_TRANSCRIPT_CHARS) : joined
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+
 function plain(text: string): string {
   return text.replace(/\*\*(.+?)\*\*/g, "$1")
 }
 
+// Mismo esqueleto que el diálogo del /btw: cabecera con título y la pista de
+// cierre, cuerpo con el markdown sobre la superficie elevada y pie con las
+// acciones. La capa de teclas vive acá y muere con el componente.
 function Panel(props: {
-  title: string
-  focus?: string
-  content: string
-  theme: Context["theme"]
+  context: Context
+  note: string
+  answer: string
   style: SyntaxStyle
-  maxHeight: number
-  onScroll: (el: ScrollBoxRenderable | null) => void
 }) {
+  const theme = props.context.theme
+  const surface = theme.surface("dialog")
+  const [copied, setCopied] = createSignal(false)
+  let scroll: ScrollBoxRenderable | null = null
+
+  const page = () => Math.max(8, Math.floor(props.context.renderer.height * 0.6))
+
+  function copy() {
+    const ok = props.context.renderer.copyToClipboardOSC52?.(plain(props.answer)) === true
+    if (ok) {
+      setCopied(true)
+      return
+    }
+    props.context.ui.toast.show({
+      message: "No se pudo copiar (la terminal no soporta OSC52)",
+      variant: "warning",
+    })
+  }
+
+  props.context.keymap.layer(() => ({
+    mode: "modal",
+    commands: [
+      { id: "brief.copy", title: "Copiar brief", group: "Dialog", bind: "c", run: () => copy() },
+      { id: "brief.up", title: "Subir", group: "Dialog", bind: "k", run: () => scroll?.scrollBy(-1) },
+      { id: "brief.down", title: "Bajar", group: "Dialog", bind: "j", run: () => scroll?.scrollBy(1) },
+      { id: "brief.up.arrow", title: "Subir", group: "Dialog", bind: "up", run: () => scroll?.scrollBy(-1) },
+      { id: "brief.down.arrow", title: "Bajar", group: "Dialog", bind: "down", run: () => scroll?.scrollBy(1) },
+      { id: "brief.pageup", title: "Página arriba", group: "Dialog", bind: "pageup", run: () => scroll?.scrollBy(-page()) },
+      { id: "brief.pagedown", title: "Página abajo", group: "Dialog", bind: "pagedown", run: () => scroll?.scrollBy(page()) },
+      { id: "brief.home", title: "Ir al inicio", group: "Dialog", bind: "home", run: () => scroll?.scrollTo(0) },
+      { id: "brief.end", title: "Ir al final", group: "Dialog", bind: "end", run: () => scroll?.scrollTo(scroll.scrollHeight) },
+    ],
+  }))
+
   return (
-    <box width="100%" flexDirection="column" paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-      <box flexDirection="row" gap={2} flexShrink={0} paddingBottom={1}>
-        <text fg={props.theme.text.base}>
-          <strong>{props.title}</strong>
-        </text>
-        <text fg={props.theme.text.muted}>{props.focus ?? ""}</text>
-      </box>
-      <scrollbox
-        ref={(el) => props.onScroll(el)}
-        maxHeight={props.maxHeight}
-        flexGrow={1}
-        scrollbarOptions={{ visible: false }}
-        contentOptions={{ minHeight: 0 }}
-      >
-        <box paddingBottom={1}>
-          <markdown content={props.content} syntaxStyle={props.style} conceal />
+    <box flexDirection="column" paddingLeft={INSET} paddingRight={INSET} paddingBottom={1} gap={1}>
+      <box flexDirection="row" justifyContent="space-between" gap={2} flexShrink={0}>
+        <box flexDirection="row" gap={2} flexShrink={1} minWidth={0}>
+          <text fg={surface.text.base} flexShrink={0}>
+            <strong>/brief</strong>
+          </text>
+          <text fg={surface.text.muted} wrapMode="none" truncate flexGrow={1}>
+            {props.note}
+          </text>
         </box>
-      </scrollbox>
-      <text fg={props.theme.text.muted} flexShrink={0}>
-        copy c · scroll j/k ↑/↓
-      </text>
+        <text fg={surface.text.muted} flexShrink={0}>
+          esc
+        </text>
+      </box>
+      <box marginLeft={-INSET} marginRight={-INSET} minHeight={0} flexGrow={1}>
+        <scrollbox
+          ref={(el: ScrollBoxRenderable | null) => {
+            scroll = el
+          }}
+          maxHeight={page()}
+          backgroundColor={theme.background.raised.high}
+          contentOptions={{ minHeight: 0 }}
+          scrollbarOptions={{ visible: false }}
+        >
+          <box paddingLeft={INSET} paddingRight={INSET} paddingTop={1} paddingBottom={1}>
+            <markdown
+              content={props.answer}
+              syntaxStyle={props.style}
+              conceal
+              internalBlockMode="top-level"
+              tableOptions={{ style: "grid", cellPaddingX: 1 }}
+              fg={theme.markdown.text}
+              bg={theme.background.raised.high}
+            />
+          </box>
+        </scrollbox>
+      </box>
+      <box
+        flexDirection="row"
+        justifyContent="space-between"
+        backgroundColor={surface.background.raised.high}
+        paddingLeft={INSET - 1}
+        paddingRight={INSET - 1}
+        flexShrink={0}
+      >
+        <text fg={surface.text.faint} wrapMode="none" flexShrink={0}>
+          {copied() ? "✓ copiado c" : "copiar c"}
+        </text>
+        <text fg={surface.text.faint} wrapMode="none" flexShrink={0}>
+          scroll j/k ↑/↓
+        </text>
+      </box>
     </box>
   )
 }
@@ -140,26 +216,9 @@ export default Plugin.define({
     // El server también carga este entrypoint, sin renderer: no hay nada que hacer ahí.
     if (!context?.renderer) return
 
-    let copied: string | null = null
-    let scroll: ScrollBoxRenderable | null = null
-    let popMode: (() => void) | null = null
-
-    function copy() {
-      if (!copied) return false
-      const ok = context.renderer.copyToClipboardOSC52?.(copied) === true
-      context.ui.toast.show({
-        message: ok ? "Brief copiado" : "No se pudo copiar (la terminal no soporta OSC52)",
-        variant: ok ? "success" : "warning",
-      })
-    }
-
-    function page(): number {
-      return Math.max(8, Math.floor(context.renderer.height * 0.6))
-    }
-
-    function errorText(error: unknown): string {
-      return error instanceof Error ? error.message : String(error)
-    }
+    // Contador de briefs en vuelo: el host muestra el indicador del pie del
+    // prompt mientras haya trabajo, igual que el /btw nativo.
+    const [pending, setPending] = createSignal(0)
 
     // Camino stateless: no depende del estado de la sesión, pero hay que
     // mandarle la transcripción como texto.
@@ -214,10 +273,9 @@ export default Plugin.define({
         .filter(Boolean)
         .join("\n\n")
 
-      context.ui.toast.show({ title: "brief", message: "Generando…", duration: 1500 })
-
       let text = ""
       let via = ""
+      setPending((count) => count + 1)
       try {
         const result = await generate(route.sessionID, prompt)
         text = result.text
@@ -226,6 +284,8 @@ export default Plugin.define({
         log("brief.error", { error: errorText(error) })
         context.ui.toast.show({ message: `No se pudo generar el brief: ${errorText(error)}`, variant: "error" })
         return
+      } finally {
+        setPending((count) => count - 1)
       }
 
       if (!text) {
@@ -235,52 +295,32 @@ export default Plugin.define({
       }
       log("brief.ok", { via, chars: text.length })
 
-      const style = SyntaxStyle.fromStyles({ default: { fg: context.theme.text.base } }, context.renderer.nativeScene)
-      copied = plain(text)
-      scroll = null
-      popMode?.()
-      popMode = context.keymap.mode.push(MODE)
-      context.ui.dialog.set({ size: "large", centered: true })
+      const style = SyntaxStyle.fromStyles({ default: { fg: context.theme.markdown.text } }, context.renderer.nativeScene)
+      // El orden importa: `show` reemplaza el diálogo y resetea tamaño y
+      // centrado a medium/no centrado; `set` tiene que venir después.
       context.ui.dialog.show(
-        () => (
-          <Panel
-            title="/brief"
-            focus={focus}
-            content={text}
-            theme={context.theme}
-            style={style}
-            maxHeight={page()}
-            onScroll={(el) => {
-              scroll = el
-            }}
-          />
-        ),
+        () => <Panel context={context} note={focus} answer={text} style={style} />,
         () => {
-          copied = null
-          scroll = null
-          popMode?.()
-          popMode = null
           void context.renderer.idle().then(() => style.destroy())
         },
       )
+      context.ui.dialog.set({ size: "large", centered: true })
     }
 
-    // Modo propio: sólo mientras el panel está abierto.
-    context.keymap.layer(() => ({
-      mode: MODE,
-      commands: [
-        { id: "brief.copy", title: "Copiar brief", bind: "c", run: () => copy() },
-        { id: "brief.close", title: "Cerrar brief", bind: "escape", run: () => context.ui.dialog.clear() },
-        { id: "brief.up", title: "Subir", bind: "k", run: () => scroll?.scrollBy(-1) },
-        { id: "brief.down", title: "Bajar", bind: "j", run: () => scroll?.scrollBy(1) },
-        { id: "brief.up.arrow", title: "Subir", bind: "up", run: () => scroll?.scrollBy(-1) },
-        { id: "brief.down.arrow", title: "Bajar", bind: "down", run: () => scroll?.scrollBy(1) },
-        { id: "brief.pageup", title: "Página arriba", bind: "pageup", run: () => scroll?.scrollBy(-page()) },
-        { id: "brief.pagedown", title: "Página abajo", bind: "pagedown", run: () => scroll?.scrollBy(page()) },
-        { id: "brief.home", title: "Ir al inicio", bind: "home", run: () => scroll?.scrollTo(0) },
-        { id: "brief.end", title: "Ir al final", bind: "end", run: () => scroll?.scrollTo(scroll.scrollHeight) },
-      ],
-    }))
+    // Indicador cosmético: si el host no publica slots, el plugin sigue cargando.
+    try {
+      context.ui.slot({
+        append: "prompt.footer.status",
+        render: () =>
+          pending() > 0 ? (
+            <text fg={context.theme.hue.interactive[200]} flexShrink={0}>
+              /brief
+            </text>
+          ) : null,
+      })
+    } catch (error) {
+      log("slot.unavailable", { error: errorText(error) })
+    }
 
     context.keymap.layer(() => ({
       mode: "global",

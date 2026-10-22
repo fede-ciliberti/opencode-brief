@@ -1,6 +1,6 @@
 {
   "name": "opencode-brief",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenCode TUI plugin: /brief opens an executive summary of the session in a dialog",
   "license": "MIT",
   "type": "module",
