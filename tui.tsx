@@ -3,6 +3,8 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { SyntaxStyle } from "@opentui/core"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
 import type { SessionMessageInfo } from "@opencode/client"
@@ -13,10 +15,10 @@ const MODE = "opencode-brief"
 
 const FALLBACK = `Sos un asistente que resume el estado de una sesión de trabajo para alguien que tiene 40 segundos.
 Devolvé exactamente estas secciones, omitiendo las que queden vacías:
-Hecho — 2 a 5 bullets de resultados, no de actividades.
-Estado — una o dos líneas: dónde está parado el trabajo ahora.
-Sigue — pasos concretos, en orden de ejecución.
-Decisiones y bloqueos — sólo si existen.
+**Hecho** — 2 a 5 bullets de resultados, no de actividades.
+**Estado** — una o dos líneas: dónde está parado el trabajo ahora.
+**Sigue** — pasos concretos, en orden de ejecución.
+**Decisiones y bloqueos** — sólo si existen.
 Lenguaje de usuario: resultados y consecuencias, sin rutas de archivos, nombres de funciones ni jerga técnica. Máximo 15 líneas.`
 
 // El texto vive en la skill para no duplicarlo: el panel y el comando /brief
@@ -47,8 +49,6 @@ function modelOption(context: Context): ModelRefValue | undefined {
   return undefined
 }
 
-// Camino alternativo: `generate.text` acepta modelo pero no ve la sesión, así
-// que hay que mandarle la transcripción como texto.
 function assistantText(message: SessionMessageInfo): string {
   if (message.type !== "assistant") return ""
   const parts: Array<{ type?: string; text?: string }> = message.content
@@ -59,6 +59,8 @@ function assistantText(message: SessionMessageInfo): string {
     .trim()
 }
 
+// Camino alternativo: `generate.text` acepta modelo pero no ve la sesión, así
+// que hay que mandarle la transcripción como texto.
 function transcript(context: Context, sessionID: string): string {
   const messages = context.data.session.message.list(sessionID) ?? []
   const chunks: string[] = []
@@ -78,11 +80,37 @@ function plain(text: string): string {
   return text.replace(/\*\*(.+?)\*\*/g, "$1")
 }
 
-function Panel(props: { title: string; text: string; theme: Context["theme"] }) {
+function Panel(props: {
+  title: string
+  focus?: string
+  content: string
+  theme: Context["theme"]
+  style: SyntaxStyle
+  maxHeight: number
+  onScroll: (el: ScrollBoxRenderable | null) => void
+}) {
   return (
-    <box flexDirection="column" paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1} gap={1}>
-      <text fg={props.theme.text.muted}>{props.title}</text>
-      <text fg={props.theme.text.base}>{props.text}</text>
+    <box width="100%" flexDirection="column" paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
+      <box flexDirection="row" gap={2} flexShrink={0} paddingBottom={1}>
+        <text fg={props.theme.text.base}>
+          <strong>{props.title}</strong>
+        </text>
+        <text fg={props.theme.text.muted}>{props.focus ?? ""}</text>
+      </box>
+      <scrollbox
+        ref={(el) => props.onScroll(el)}
+        maxHeight={props.maxHeight}
+        flexGrow={1}
+        scrollbarOptions={{ visible: false }}
+        contentOptions={{ minHeight: 0 }}
+      >
+        <box paddingBottom={1}>
+          <markdown content={props.content} syntaxStyle={props.style} conceal />
+        </box>
+      </scrollbox>
+      <text fg={props.theme.text.muted} flexShrink={0}>
+        copy c · scroll j/k ↑/↓
+      </text>
     </box>
   )
 }
@@ -93,15 +121,21 @@ export default Plugin.define({
     // El server también carga este entrypoint, sin renderer: no hay nada que hacer ahí.
     if (!context?.renderer) return
 
-    let last: string | null = null
+    let copied: string | null = null
+    let scroll: ScrollBoxRenderable | null = null
     let popMode: (() => void) | null = null
 
-    function copy(text: string) {
-      const ok = context.renderer.copyToClipboardOSC52?.(text) === true
+    function copy() {
+      if (!copied) return false
+      const ok = context.renderer.copyToClipboardOSC52?.(copied) === true
       context.ui.toast.show({
         message: ok ? "Brief copiado" : "No se pudo copiar (la terminal no soporta OSC52)",
         variant: ok ? "success" : "warning",
       })
+    }
+
+    function page(): number {
+      return Math.max(8, Math.floor(context.renderer.height * 0.6))
     }
 
     async function show(focus: string) {
@@ -146,39 +180,50 @@ export default Plugin.define({
         return
       }
 
-      last = plain(text)
+      const style = SyntaxStyle.fromStyles({ default: { fg: context.theme.text.base } }, context.renderer.nativeScene)
+      copied = plain(text)
+      scroll = null
       popMode?.()
       popMode = context.keymap.mode.push(MODE)
       context.ui.dialog.set({ size: "large", centered: true })
       context.ui.dialog.show(
-        () => <Panel title={focus ? `/brief ${focus}` : "/brief"} text={last ?? ""} theme={context.theme} />,
+        () => (
+          <Panel
+            title="/brief"
+            focus={focus}
+            content={text}
+            theme={context.theme}
+            style={style}
+            maxHeight={page()}
+            onScroll={(el) => {
+              scroll = el
+            }}
+          />
+        ),
         () => {
-          last = null
+          copied = null
+          scroll = null
           popMode?.()
           popMode = null
+          void context.renderer.idle().then(() => style.destroy())
         },
       )
     }
 
-    // Modo propio: sólo mientras el panel está abierto, `c` copia y `escape` cierra.
+    // Modo propio: sólo mientras el panel está abierto.
     context.keymap.layer(() => ({
       mode: MODE,
       commands: [
-        {
-          id: "brief.copy",
-          title: "Copiar brief",
-          bind: "c",
-          run: () => {
-            if (!last) return false
-            copy(last)
-          },
-        },
-        {
-          id: "brief.close",
-          title: "Cerrar brief",
-          bind: "escape",
-          run: () => context.ui.dialog.clear(),
-        },
+        { id: "brief.copy", title: "Copiar brief", bind: "c", run: () => copy() },
+        { id: "brief.close", title: "Cerrar brief", bind: "escape", run: () => context.ui.dialog.clear() },
+        { id: "brief.up", title: "Subir", bind: "k", run: () => scroll?.scrollBy(-1) },
+        { id: "brief.down", title: "Bajar", bind: "j", run: () => scroll?.scrollBy(1) },
+        { id: "brief.up.arrow", title: "Subir", bind: "up", run: () => scroll?.scrollBy(-1) },
+        { id: "brief.down.arrow", title: "Bajar", bind: "down", run: () => scroll?.scrollBy(1) },
+        { id: "brief.pageup", title: "Página arriba", bind: "pageup", run: () => scroll?.scrollBy(-page()) },
+        { id: "brief.pagedown", title: "Página abajo", bind: "pagedown", run: () => scroll?.scrollBy(page()) },
+        { id: "brief.home", title: "Ir al inicio", bind: "home", run: () => scroll?.scrollTo(0) },
+        { id: "brief.end", title: "Ir al final", bind: "end", run: () => scroll?.scrollTo(scroll.scrollHeight) },
       ],
     }))
 
