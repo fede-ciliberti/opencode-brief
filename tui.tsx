@@ -10,8 +10,18 @@ import type { Context } from "@opencode/plugin/tui/context"
 import type { SessionMessageInfo } from "@opencode/client"
 
 const SKILL_PATH = path.join(os.homedir(), ".config", "opencode", "skills", "brief", "SKILL.md")
+const LOG_DIR = path.join(os.homedir(), ".local", "share", "opencode-brief")
+const LOG_FILE = path.join(LOG_DIR, "brief.log")
 const MAX_TRANSCRIPT_CHARS = 40_000
 const MODE = "opencode-brief"
+
+// Sólo longitudes y resultado: nunca el contenido del prompt ni del brief.
+function log(event: string, data: Record<string, unknown> = {}) {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true })
+    fs.appendFileSync(LOG_FILE, `${JSON.stringify({ ts: new Date().toISOString(), event, ...data })}\n`)
+  } catch {}
+}
 
 const FALLBACK = `Sos un asistente que resume el estado de una sesión de trabajo para alguien que tiene 40 segundos.
 Devolvé exactamente estas secciones, omitiendo las que queden vacías:
@@ -138,6 +148,48 @@ export default Plugin.define({
       return Math.max(8, Math.floor(context.renderer.height * 0.6))
     }
 
+    function errorText(error: unknown): string {
+      return error instanceof Error ? error.message : String(error)
+    }
+
+    // Camino stateless: no depende del estado de la sesión, pero hay que
+    // mandarle la transcripción como texto.
+    async function stateless(prompt: string, model?: ModelRefValue): Promise<string> {
+      const result = await context.client.generate.text(model ? { prompt, model } : { prompt })
+      const text = (result.text ?? "").trim()
+      log("generate.text", { chars: text.length, model: model ? `${model.providerID}/${model.id}` : "default" })
+      return text
+    }
+
+    async function generate(sessionID: string, prompt: string): Promise<{ text: string; via: string }> {
+      const chosen = modelOption(context)
+      if (chosen) {
+        return { text: await stateless(prompt, chosen), via: "generate.text(model)" }
+      }
+
+      // Camino barato: ve la sesión nativamente y no escribe en el historial.
+      try {
+        const result = await context.client.session.generate({ sessionID, prompt })
+        const text = (result.text ?? "").trim()
+        log("session.generate", { chars: text.length })
+        if (text) return { text, via: "session.generate" }
+      } catch (error) {
+        log("session.generate.error", { error: errorText(error) })
+      }
+
+      // La generación transitoria sobre la sesión devuelve vacío en sesiones
+      // largas u ocupadas. El camino stateless no depende de ese estado.
+      const current = context.ui.model.current()
+      const fallback: ModelRefValue | undefined = current
+        ? current.variant
+          ? { providerID: current.providerID, id: current.modelID, variant: current.variant }
+          : { providerID: current.providerID, id: current.modelID }
+        : undefined
+      const body = transcript(context, sessionID)
+      const text = await stateless(`${prompt}\n\n--- TRANSCRIPCIÓN DE LA SESIÓN ---\n${body}`, fallback)
+      return { text, via: `generate.text(fallback, ${body.length} chars)` }
+    }
+
     async function show(focus: string) {
       const route = context.ui.router.current()
       if (route?.type !== "session") {
@@ -153,32 +205,26 @@ export default Plugin.define({
         .filter(Boolean)
         .join("\n\n")
 
-      const model = modelOption(context)
       context.ui.toast.show({ title: "brief", message: "Generando…", duration: 1500 })
 
       let text = ""
+      let via = ""
       try {
-        if (model) {
-          const body = transcript(context, route.sessionID)
-          const result = await context.client.generate.text({
-            prompt: `${prompt}\n\n--- TRANSCRIPCIÓN DE LA SESIÓN ---\n${body}`,
-            model,
-          })
-          text = result.text.trim()
-        } else {
-          const result = await context.client.session.generate({ sessionID: route.sessionID, prompt })
-          text = result.text.trim()
-        }
+        const result = await generate(route.sessionID, prompt)
+        text = result.text
+        via = result.via
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        context.ui.toast.show({ message: `No se pudo generar el brief: ${message}`, variant: "error" })
+        log("brief.error", { error: errorText(error) })
+        context.ui.toast.show({ message: `No se pudo generar el brief: ${errorText(error)}`, variant: "error" })
         return
       }
 
       if (!text) {
-        context.ui.toast.show({ message: "El brief vino vacío", variant: "warning" })
+        log("brief.empty", { via })
+        context.ui.toast.show({ message: `El brief vino vacío (ver ${LOG_FILE})`, variant: "warning" })
         return
       }
+      log("brief.ok", { via, chars: text.length })
 
       const style = SyntaxStyle.fromStyles({ default: { fg: context.theme.text.base } }, context.renderer.nativeScene)
       copied = plain(text)
