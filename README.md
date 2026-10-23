@@ -32,6 +32,34 @@ Restart the TUI. Rollback is removing that entry.
   skill changes both this panel and the `/brief` chat command. A built-in fallback is used when the
   file is missing.
 
+## Thinking / reasoning effort
+
+`session.generate` takes only `{ sessionID, prompt }`: there is no per-call thinking switch, so by
+default the brief inherits the session's model and variant. The plugin lowers the effort from its
+`./server` entry with `session.hook("generate")` — the hook the host provides for auxiliary requests
+(`SessionRequestKind` has a separate `generate` kind). It writes `reasoningEffort` /
+`reasoning_effort` into the request options and only touches requests carrying the
+`<!-- opencode-brief -->` marker, so normal turns and other plugins' transient generations are
+untouched.
+
+```json
+{
+  "plugins": [
+    {
+      "package": "/path/to/opencode-brief",
+      "options": { "thinking": "low" }
+    }
+  ]
+}
+```
+
+- `low` is the default; `inherit` skips the hook entirely.
+- `none` / `minimal` are only valid if the model exposes them. `litellm/deepseek-v4.1-flash` has
+  `low`, `high` and `max` — there is no `none`; models like `gpt-oss` do have `none`/`minimal`.
+- The effect is verifiable without instrumenting anything: the host logs `session generation usage
+  diagnostic` with `reasoningTokens` for the brief's request, and the plugin logs `server.init` and
+  `generate.hook` events to `~/.local/share/opencode-brief/brief.log`.
+
 ## Window mechanics (mirrors `/btw`)
 
 The dialog is opened the way the host opens `/btw`, not with plugin-specific plumbing:

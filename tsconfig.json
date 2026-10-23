@@ -8,8 +8,15 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "lib": ["ESNext"],
-    "types": ["node"]
+    "lib": [
+      "ESNext"
+    ],
+    "types": [
+      "node"
+    ]
   },
-  "include": ["tui.tsx"]
+  "include": [
+    "tui.tsx",
+    "server.ts"
+  ]
 }

@@ -19,6 +19,8 @@ const LOG_FILE = path.join(LOG_DIR, "brief.log")
 const MAX_TRANSCRIPT_CHARS = 40_000
 /** Inset lateral del diálogo nativo (bf en el host): padding de cabecera y sangría del cuerpo. */
 const INSET = 3
+/** Marca que el server hook usa para reconocer el request del brief. Misma constante en server.ts. */
+const MARKER = "<!-- opencode-brief -->"
 
 // Sólo longitudes y resultado: nunca el contenido del prompt ni del brief.
 function log(event: string, data: Record<string, unknown> = {}) {
@@ -54,7 +56,11 @@ function modelOption(context: Context): ModelRefValue | undefined {
   const raw = context.options?.model
   if (!raw) return undefined
   if (typeof raw === "string") {
-    const [providerID, id, variant] = raw.split("/")
+    // `provider/modelo#variant` (documentado) y `provider/modelo/variant`.
+    const [head, hashed] = raw.split("#")
+    const segments = head.split("/")
+    const [providerID, id] = segments
+    const variant = hashed || segments[2]
     if (!providerID || !id) return undefined
     return variant ? { providerID, id, variant } : { providerID, id }
   }
@@ -311,6 +317,8 @@ export default Plugin.define({
         instructions(),
         focus ? `Foco: ${focus}` : "",
         "Respondé sólo con el brief, sin preámbulo ni meta-comentario.",
+        // El hook server-side reconoce el request del brief por esta marca.
+        MARKER,
       ]
         .filter(Boolean)
         .join("\n\n")
