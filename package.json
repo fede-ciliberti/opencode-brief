@@ -1,13 +1,44 @@
 {
+  "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-brief",
   "version": "0.3.0",
-  "description": "OpenCode TUI plugin: /brief opens an executive summary of the session in a dialog",
+  "description": "OpenCode TUI plugin: /brief opens an executive summary of the current session in a dialog, without touching the transcript",
   "license": "MIT",
   "type": "module",
+  "author": "Fede Ciliberti",
   "exports": {
-    ".": "./server.ts",
-    "./server": "./server.ts",
-    "./tui": "./tui.tsx"
+    "./tui": {
+      "import": "./dist/tui.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "tui",
+    "brief",
+    "summary",
+    "session"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fede-ciliberti/opencode-brief.git"
+  },
+  "homepage": "https://github.com/fede-ciliberti/opencode-brief#readme",
+  "bugs": {
+    "url": "https://github.com/fede-ciliberti/opencode-brief/issues"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "prepare": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@opencode/plugin": "2.1.3",

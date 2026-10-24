@@ -17,6 +17,6 @@
   },
   "include": [
     "tui.tsx",
-    "server.ts"
+    "reasoning.ts"
   ]
 }

@@ -12,6 +12,7 @@ import type { ScrollBoxRenderable } from "@opentui/core"
 import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
 import type { SessionMessageInfo } from "@opencode/client"
+import { MARKER, registerReasoningHook } from "./reasoning.js"
 
 const SKILL_PATH = path.join(os.homedir(), ".config", "opencode", "skills", "brief", "SKILL.md")
 const LOG_DIR = path.join(os.homedir(), ".local", "share", "opencode-brief")
@@ -19,8 +20,6 @@ const LOG_FILE = path.join(LOG_DIR, "brief.log")
 const MAX_TRANSCRIPT_CHARS = 40_000
 /** Inset lateral del diálogo nativo (bf en el host): padding de cabecera y sangría del cuerpo. */
 const INSET = 3
-/** Marca que el server hook usa para reconocer el request del brief. Misma constante en server.ts. */
-const MARKER = "<!-- opencode-brief -->"
 
 // Sólo longitudes y resultado: nunca el contenido del prompt ni del brief.
 function log(event: string, data: Record<string, unknown> = {}) {
@@ -30,13 +29,14 @@ function log(event: string, data: Record<string, unknown> = {}) {
   } catch {}
 }
 
-const FALLBACK = `Sos un asistente que resume el estado de una sesión de trabajo para alguien que tiene 40 segundos.
-Devolvé exactamente estas secciones, omitiendo las que queden vacías:
-**Hecho** — 2 a 5 bullets de resultados, no de actividades.
-**Estado** — una o dos líneas: dónde está parado el trabajo ahora.
-**Sigue** — pasos concretos, en orden de ejecución.
-**Decisiones y bloqueos** — sólo si existen.
-Lenguaje de usuario: resultados y consecuencias, sin rutas de archivos, nombres de funciones ni jerga técnica. Máximo 15 líneas.`
+const FALLBACK = `You summarize the state of a work session for someone who has 40 seconds.
+Return exactly these sections, skipping the empty ones:
+**Done** — 2 to 5 bullets of results, not activities.
+**State** — one or two lines: where the work stands right now.
+**Next** — concrete steps, in execution order.
+**Decisions and blockers** — only if they exist.
+User language: results and consequences, no file paths, no function names, no jargon. Maximum 15 lines.
+`
 
 // El texto vive en la skill para no duplicarlo: el panel y el comando /brief
 // en el chat comparten las mismas reglas.
@@ -181,7 +181,7 @@ function Panel(props: {
       return
     }
     props.context.ui.toast.show({
-      message: "No se pudo copiar (la terminal no soporta OSC52)",
+      message: "Could not copy (this terminal does not support OSC52)",
       variant: "warning",
     })
   }
@@ -189,15 +189,15 @@ function Panel(props: {
   props.context.keymap.layer(() => ({
     mode: "modal",
     commands: [
-      { id: "brief.copy", title: "Copiar brief", group: "Dialog", bind: "c", run: () => copy() },
-      { id: "brief.up", title: "Subir", group: "Dialog", bind: "k", run: () => scroll?.scrollBy(-1) },
-      { id: "brief.down", title: "Bajar", group: "Dialog", bind: "j", run: () => scroll?.scrollBy(1) },
-      { id: "brief.up.arrow", title: "Subir", group: "Dialog", bind: "up", run: () => scroll?.scrollBy(-1) },
-      { id: "brief.down.arrow", title: "Bajar", group: "Dialog", bind: "down", run: () => scroll?.scrollBy(1) },
-      { id: "brief.pageup", title: "Página arriba", group: "Dialog", bind: "pageup", run: () => scroll?.scrollBy(-page()) },
-      { id: "brief.pagedown", title: "Página abajo", group: "Dialog", bind: "pagedown", run: () => scroll?.scrollBy(page()) },
-      { id: "brief.home", title: "Ir al inicio", group: "Dialog", bind: "home", run: () => scroll?.scrollTo(0) },
-      { id: "brief.end", title: "Ir al final", group: "Dialog", bind: "end", run: () => scroll?.scrollTo(scroll.scrollHeight) },
+      { id: "brief.copy", title: "Copy brief", group: "Dialog", bind: "c", run: () => copy() },
+      { id: "brief.up", title: "Scroll up", group: "Dialog", bind: "k", run: () => scroll?.scrollBy(-1) },
+      { id: "brief.down", title: "Scroll down", group: "Dialog", bind: "j", run: () => scroll?.scrollBy(1) },
+      { id: "brief.up.arrow", title: "Scroll up", group: "Dialog", bind: "up", run: () => scroll?.scrollBy(-1) },
+      { id: "brief.down.arrow", title: "Scroll down", group: "Dialog", bind: "down", run: () => scroll?.scrollBy(1) },
+      { id: "brief.pageup", title: "Page up", group: "Dialog", bind: "pageup", run: () => scroll?.scrollBy(-page()) },
+      { id: "brief.pagedown", title: "Page down", group: "Dialog", bind: "pagedown", run: () => scroll?.scrollBy(page()) },
+      { id: "brief.home", title: "Go to start", group: "Dialog", bind: "home", run: () => scroll?.scrollTo(0) },
+      { id: "brief.end", title: "Go to end", group: "Dialog", bind: "end", run: () => scroll?.scrollTo(scroll.scrollHeight) },
     ],
   }))
 
@@ -248,7 +248,7 @@ function Panel(props: {
         flexShrink={0}
       >
         <text fg={surface.text.faint} wrapMode="none" flexShrink={0}>
-          {copied() ? "✓ copiado c" : "copiar c"}
+          {copied() ? "✓ copied c" : "copy c"}
         </text>
         <text fg={surface.text.faint} wrapMode="none" flexShrink={0}>
           scroll j/k ↑/↓
@@ -261,8 +261,9 @@ function Panel(props: {
 export default Plugin.define({
   id: "opencode-brief",
   setup(context) {
-    // El server también carga este entrypoint, sin renderer: no hay nada que hacer ahí.
-    if (!context?.renderer) return
+    // El proceso del server carga este mismo entrypoint sin renderer y con el
+    // Context del server: ahí se registra el hook de razonamiento del brief.
+    if (!context?.renderer) return registerReasoningHook(context as never)
 
     // Contador de briefs en vuelo: el host muestra el indicador del pie del
     // prompt mientras haya trabajo, igual que el /btw nativo.
@@ -309,14 +310,14 @@ export default Plugin.define({
     async function show(focus: string) {
       const route = context.ui.router.current()
       if (route?.type !== "session") {
-        context.ui.toast.show({ message: "Abrí una sesión primero", variant: "warning" })
+        context.ui.toast.show({ message: "Open a session first", variant: "warning" })
         return
       }
 
       const prompt = [
         instructions(),
-        focus ? `Foco: ${focus}` : "",
-        "Respondé sólo con el brief, sin preámbulo ni meta-comentario.",
+        focus ? `Focus: ${focus}` : "",
+        "Reply with the brief only, no preamble or meta-commentary.",
         // El hook server-side reconoce el request del brief por esta marca.
         MARKER,
       ]
@@ -332,7 +333,7 @@ export default Plugin.define({
         via = result.via
       } catch (error) {
         log("brief.error", { error: errorText(error) })
-        context.ui.toast.show({ message: `No se pudo generar el brief: ${errorText(error)}`, variant: "error" })
+        context.ui.toast.show({ message: `Could not generate the brief: ${errorText(error)}`, variant: "error" })
         return
       } finally {
         setPending((count) => count - 1)
@@ -340,7 +341,7 @@ export default Plugin.define({
 
       if (!text) {
         log("brief.empty", { via })
-        context.ui.toast.show({ message: `El brief vino vacío (ver ${LOG_FILE})`, variant: "warning" })
+        context.ui.toast.show({ message: `The brief came back empty (see ${LOG_FILE})`, variant: "warning" })
         return
       }
       log("brief.ok", { via, chars: text.length })
@@ -377,8 +378,8 @@ export default Plugin.define({
       commands: [
         {
           id: "brief.show",
-          title: "Brief ejecutivo de la sesión",
-          description: "Resumen de lo hecho y lo que sigue, en un panel",
+          title: "Executive brief of the session",
+          description: "Summary of what is done and what comes next, in a dialog",
           group: "Session",
           palette: true,
           slash: { name: "brief", arguments: true },
