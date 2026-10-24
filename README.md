@@ -9,19 +9,14 @@ transcript.
 ## Install
 
 ```sh
-npm install -g opencode-brief
+opencode plugin add opencode-brief
 ```
 
-Then register the package in `~/.config/opencode/cli.json`:
+That installs the package and registers it in the global configuration. Restart the TUI. Rollback is
+`opencode plugin remove opencode-brief`.
 
-```json
-{
-  "plugins": [{ "package": "opencode-brief" }]
-}
-```
-
-A local checkout works the same way: point `package` at its directory instead. Restart the TUI.
-Rollback is removing that entry.
+A local checkout works the same way: point the `package` field in
+`~/.config/opencode/cli.json` at the directory instead of the registry name.
 
 ## Use
 
