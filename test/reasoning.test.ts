@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test"
 import { MARKER, registerReasoningHook } from "../reasoning"
 
-process.env.OPENCODE_BRIEF_LOG = "/tmp/opencode-brief-test.log"
+process.env.OPENCODE_BRIEF_LOG = "/tmp/opencode/brief-test.log"
 
 function harness(options: Record<string, any> = {}) {
   const calls: Array<{ name: string; callback: (request: any) => void }> = []

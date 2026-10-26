@@ -14,7 +14,12 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-const LOG_FILE = process.env.OPENCODE_BRIEF_LOG ?? path.join(os.homedir(), ".local", "share", "opencode-brief", "brief.log")
+// La ruta se resuelve en cada escritura: así un test o un usuario pueden
+// redirigir el log con OPENCODE_BRIEF_LOG sin depender del orden de imports.
+function logFile(): string {
+  return process.env.OPENCODE_BRIEF_LOG ?? path.join(os.homedir(), ".local", "share", "opencode-brief", "brief.log")
+}
+
 /** Marca que el plugin agrega al prompt del brief para reconocer su request. */
 export const MARKER = "<!-- opencode-brief -->"
 
@@ -33,8 +38,9 @@ export interface ServerContext {
 // Sólo longitudes y valores de esfuerzo: nunca el contenido del prompt ni del brief.
 export function log(event: string, data: Record<string, unknown> = {}) {
   try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true })
-    fs.appendFileSync(LOG_FILE, `${JSON.stringify({ ts: new Date().toISOString(), event, ...data })}\n`)
+    const file = logFile()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.appendFileSync(file, `${JSON.stringify({ ts: new Date().toISOString(), event, ...data })}\n`)
   } catch {}
 }
 

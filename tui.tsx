@@ -16,8 +16,7 @@ import { MARKER, registerReasoningHook } from "./reasoning.js"
 import { TITLE_FORMAT, TITLE_RULES, parseBrief } from "./title.js"
 
 const SKILL_PATH = path.join(os.homedir(), ".config", "opencode", "skills", "brief", "SKILL.md")
-const LOG_DIR = path.join(os.homedir(), ".local", "share", "opencode-brief")
-const LOG_FILE = path.join(LOG_DIR, "brief.log")
+const LOG_FILE = path.join(os.homedir(), ".local", "share", "opencode-brief", "brief.log")
 const MAX_TRANSCRIPT_CHARS = 40_000
 /** Inset lateral del diálogo nativo (bf en el host): padding de cabecera y sangría del cuerpo. */
 const INSET = 3
@@ -25,8 +24,9 @@ const INSET = 3
 // Sólo longitudes y resultado: nunca el contenido del prompt ni del brief.
 function log(event: string, data: Record<string, unknown> = {}) {
   try {
-    fs.mkdirSync(LOG_DIR, { recursive: true })
-    fs.appendFileSync(LOG_FILE, `${JSON.stringify({ ts: new Date().toISOString(), event, ...data })}\n`)
+    const file = process.env.OPENCODE_BRIEF_LOG ?? LOG_FILE
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.appendFileSync(file, `${JSON.stringify({ ts: new Date().toISOString(), event, ...data })}\n`)
   } catch {}
 }
 
