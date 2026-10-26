@@ -18,7 +18,7 @@ The title should read naturally as a short phrase, not as a stack of nouns. Writ
 Use sentence case, not title case: capitalize the first word and proper nouns only. Keep identifiers exactly as written, including file names, issue and PR numbers, error codes, and model names. Use the same language as the session.`
 
 /** Contrato de salida: el título primero, después el brief. */
-export const TITLE_FORMAT = `Return exactly this shape, with nothing before the TITLE line:
+export const TITLE_FORMAT = `Return exactly this shape, with nothing before the TITLE line. The brief keeps the format and sections you would have used anyway:
 
 TITLE: <the title>
 ---
