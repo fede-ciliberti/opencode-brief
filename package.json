@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-brief",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "OpenCode TUI plugin: /brief opens an executive summary of the current session in a dialog, without touching the transcript",
   "license": "MIT",
   "type": "module",

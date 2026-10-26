@@ -13,6 +13,7 @@ import { Plugin } from "@opencode/plugin/tui"
 import type { Context } from "@opencode/plugin/tui/context"
 import type { SessionMessageInfo } from "@opencode/client"
 import { MARKER, registerReasoningHook } from "./reasoning.js"
+import { TITLE_FORMAT, TITLE_RULES, parseBrief } from "./title.js"
 
 const SKILL_PATH = path.join(os.homedir(), ".config", "opencode", "skills", "brief", "SKILL.md")
 const LOG_DIR = path.join(os.homedir(), ".local", "share", "opencode-brief")
@@ -163,13 +164,17 @@ function plain(text: string): string {
 // acciones. La capa de teclas vive acá y muere con el componente.
 function Panel(props: {
   context: Context
+  sessionID: string
   note: string
   answer: string
+  /** Título propuesto por el modelo; ausente si no devolvió uno usable. */
+  title?: string
   style: SyntaxStyle
 }) {
   const theme = props.context.theme
   const surface = theme.surface("dialog")
   const [copied, setCopied] = createSignal(false)
+  const [renamed, setRenamed] = createSignal(false)
   let scroll: ScrollBoxRenderable | null = null
 
   const page = () => Math.max(8, Math.floor(props.context.renderer.height * 0.6))
@@ -186,10 +191,29 @@ function Panel(props: {
     })
   }
 
+  // Renombrar es una acción explícita: el título se propone siempre, pero no se
+  // escribe en la sesión hasta que se aprieta `t`.
+  async function rename() {
+    const title = props.title
+    if (!title) {
+      props.context.ui.toast.show({ message: "The model did not propose a title", variant: "warning" })
+      return
+    }
+    try {
+      await props.context.client.session.update({ sessionID: props.sessionID, title })
+      setRenamed(true)
+      log("title.rename", { chars: title.length })
+    } catch (error) {
+      log("title.rename.error", { error: errorText(error) })
+      props.context.ui.toast.show({ message: `Could not rename the session: ${errorText(error)}`, variant: "error" })
+    }
+  }
+
   props.context.keymap.layer(() => ({
     mode: "modal",
     commands: [
       { id: "brief.copy", title: "Copy brief", group: "Dialog", bind: "c", run: () => copy() },
+      { id: "brief.title", title: "Use the proposed title", group: "Dialog", bind: "t", run: () => void rename() },
       { id: "brief.up", title: "Scroll up", group: "Dialog", bind: "k", run: () => scroll?.scrollBy(-1) },
       { id: "brief.down", title: "Scroll down", group: "Dialog", bind: "j", run: () => scroll?.scrollBy(1) },
       { id: "brief.up.arrow", title: "Scroll up", group: "Dialog", bind: "up", run: () => scroll?.scrollBy(-1) },
@@ -208,9 +232,16 @@ function Panel(props: {
           <text fg={surface.text.base} flexShrink={0}>
             <strong>/brief</strong>
           </text>
-          <text fg={surface.text.muted} wrapMode="none" truncate flexGrow={1}>
-            {props.note}
-          </text>
+          {props.title ? (
+            <text fg={surface.text.base} wrapMode="none" truncate flexShrink={1}>
+              {props.title}
+            </text>
+          ) : null}
+          {props.note ? (
+            <text fg={surface.text.muted} wrapMode="none" truncate flexShrink={1}>
+              {props.note}
+            </text>
+          ) : null}
         </box>
         <text fg={surface.text.muted} flexShrink={0}>
           esc
@@ -247,9 +278,16 @@ function Panel(props: {
         paddingRight={INSET - 1}
         flexShrink={0}
       >
-        <text fg={surface.text.faint} wrapMode="none" flexShrink={0}>
-          {copied() ? "✓ copied c" : "copy c"}
-        </text>
+        <box flexDirection="row" gap={2} flexShrink={0}>
+          <text fg={surface.text.faint} wrapMode="none" flexShrink={0}>
+            {copied() ? "✓ copied c" : "copy c"}
+          </text>
+          {props.title ? (
+            <text fg={renamed() ? surface.text.base : surface.text.faint} wrapMode="none" flexShrink={0}>
+              {renamed() ? "✓ titled" : "title t"}
+            </text>
+          ) : null}
+        </box>
         <text fg={surface.text.faint} wrapMode="none" flexShrink={0}>
           scroll j/k ↑/↓
         </text>
@@ -316,8 +354,10 @@ export default Plugin.define({
 
       const prompt = [
         instructions(),
+        TITLE_RULES,
+        TITLE_FORMAT,
         focus ? `Focus: ${focus}` : "",
-        "Reply with the brief only, no preamble or meta-commentary.",
+        "No preamble, no meta-commentary, no closing offer.",
         // El hook server-side reconoce el request del brief por esta marca.
         MARKER,
       ]
@@ -344,13 +384,17 @@ export default Plugin.define({
         context.ui.toast.show({ message: `The brief came back empty (see ${LOG_FILE})`, variant: "warning" })
         return
       }
-      log("brief.ok", { via, chars: text.length })
+
+      // El título viaja con el brief: si el modelo no respetó el contrato, el
+      // cuerpo queda intacto y el panel no ofrece renombrar.
+      const { title, body } = parseBrief(text)
+      log("brief.ok", { via, chars: body.length, title: title ? title.length : 0 })
 
       const style = syntaxStyle(context.theme, context.renderer.nativeScene)
       // El orden importa: `show` reemplaza el diálogo y resetea tamaño y
       // centrado a medium/no centrado; `set` tiene que venir después.
       context.ui.dialog.show(
-        () => <Panel context={context} note={focus} answer={text} style={style} />,
+        () => <Panel context={context} sessionID={route.sessionID} note={focus} answer={body} title={title} style={style} />,
         () => {
           void context.renderer.idle().then(() => style.destroy())
         },

@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-26
+
+### Added
+
+- The brief now comes with a proposed session title, generated in the same model call. The title
+  shows in the dialog header and `t` writes it to the session through `client.session.update`; it is
+  never applied on its own. The naming rules are the ones the host uses for `session_rename`.
+- `title.ts`: parses the `TITLE: … / ---` contract, strips quotes, trailing periods and markdown
+  decoration, and falls back to the untouched brief when the model does not comply.
+
 ## [0.3.0] - 2026-10-24
 
 ### Added
